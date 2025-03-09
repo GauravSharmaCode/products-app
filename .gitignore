@@ -1,9 +1,25 @@
+<<<<<<< HEAD
 # Logs
 logs
+=======
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+>>>>>>> db-route-setup
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+<<<<<<< HEAD
 lerna-debug.log*
 .pnpm-debug.log*
 
@@ -128,3 +144,14 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+=======
+
+# Editor directories and files
+.vscode/
+.idea/
+.DS_Store
+
+# Build directories
+dist/
+build/
+>>>>>>> db-route-setup
