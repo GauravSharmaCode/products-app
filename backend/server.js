@@ -1,29 +1,16 @@
-import express from 'express';
+import express, { request } from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { sql } from '../backend/config/db.js';
-import winston from 'winston';
+import logger from './utils/logger.js';
+import productRoutes from '../backend/routes/productRoutes.js';
+import arcjet from '@arcjet/node';
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Configure logging
-const logger = winston.createLogger({
-    level: 'info',
-    format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.timestamp(),
-        winston.format.printf(({ timestamp, level, message }) => {
-            return `${timestamp} ${level}: ${message}`;
-        })
-    ),
-    transports: [
-        new winston.transports.Console()
-    ]
-});
 
 // middleware to parse request body into JSON
 app.use(express.json());
@@ -35,7 +22,40 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
-// app.use('/api/products', productRoutes);
+// appy arcjet middleware for rate limiting to all routes with 10 requests per minute
+app.use (async (req, res, next)=> {
+    try{
+        const decision = await arcjet.protect(req, {
+            requested:1 // number of requests
+        })
+
+        if (decision.isDenied()){
+            if (decision.isRateLimited()){
+                res.status(429).send('Too many requests');
+                logger.error('Rate limited', 'arcjetMiddleware');
+            } else if (decision.reason.isBot()){
+                res.status(403).send('Bots are not allowed');
+                logger.error('Bot detected', 'arcjetMiddleware');
+            } else {
+                res.status(403).send('Forbidden');
+                logger.error('Forbidden request', 'arcjetMiddleware');
+            }
+        }
+        // check for spoofed bots
+        if (decision.isAllowed() && decision.reason.isBot()){
+            res.status(403).send('Spoofed Bots are also not allowed');
+            logger.warn('Spoofed Bot detected', 'arcjetMiddleware');
+        }
+
+        next();
+    } catch (error){
+        logger.apiError(error, 'arcjetMiddleware');
+        res.status(500).send('Internal Server Error');
+    }
+})
+
+// import product routes
+app.use('/api/products', productRoutes);
 
 app.get('/', (req, res) => {
     res.send('Server is ready');
@@ -43,26 +63,25 @@ app.get('/', (req, res) => {
 
 async function initDB(){
     try {
-        await sql`CREATE TABLE IF NOT EXISTS products (
+        const query = sql`CREATE TABLE IF NOT EXISTS products (
             id serial PRIMARY KEY,
             name VARCHAR (100) NOT NULL,
             image VARCHAR (255) NOT NULL,
             description TEXT NOT NULL,
             price NUMERIC (10, 2) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_deleted INTEGER DEFAULT 0
         )`;
-        logger.info(`Table created at ${new Date()}`);
+
+        logger.queryStart(query);
+        await query;
+        logger.querySuccess('Products table created or verified');
     } catch (err) {
-        logger.error(err);
+        logger.queryError(err, 'initDB');
+        throw err;
     }
 }
-
-// logger.debug(`PGHOST: ${process.env.PGHOST}`);
-// logger.debug(`PGDATABASE: ${process.env.PGDATABASE}`);
-// logger.debug(`PGUSER: ${process.env.PGUSER}`);
-// logger.debug(`PGPASSWORD: ${process.env.PGPASSWORD}`);
-// logger.debug(`PGPORT: ${process.env.PGPORT}`);
 
 initDB().then(() => {
     logger.info(`DB initialized at ${new Date()}`);
@@ -70,5 +89,6 @@ initDB().then(() => {
         logger.info(`Server is running on http://localhost:${PORT}`);
     });
 }).catch((err) => {
-    logger.error(err);
+    logger.error(err, 'server initialization');
+    process.exit(1);
 });
